@@ -66,6 +66,49 @@ Embedded Server  +  Auto-Configuration  +  Production-ready Defaults
                                     └── JpaRepositoriesAutoConfiguration
                                                 └── @ConditionalOnMissingBean(JpaRepository.class)
 ```
+#### Complete Mental Model
+```
+Start Application
+        │
+        ▼
+Read @SpringBootApplication
+        │
+        ▼
+Component Scan
+        │
+        ▼
+Register Controller
+Register Service
+Register Repository
+        │
+        ▼
+Look at classpath
+        │
+        ├── Is Spring MVC present?
+        │        └── Configure DispatcherServlet
+        │
+        ├── Is JPA present?
+        │        └── Configure EntityManager & DataSource
+        │
+        ├── Is Redis present?
+        │        └── Configure RedisTemplate
+        │
+        ├── Is Kafka present?
+        │        └── Configure KafkaTemplate
+        │
+        ▼
+Before creating each bean:
+"Did the user already define one?"
+        │
+        ├── Yes → Use the user's bean
+        └── No  → Create the default bean
+        │
+        ▼
+Embedded Tomcat starts
+        │
+        ▼
+Application Ready
+```
 
 ```java
 // Minimal Spring Boot application
@@ -192,6 +235,89 @@ public class LearnerService {
 }
 ```
 
+
+
+### ⚠️ `@Value` Injection Timing — Common Interview Trap
+
+One of the most common Spring mistakes is assuming that `@Value` is available everywhere. Spring injects `@Value` **after** the bean is constructed.
+
+#### ❌ Mistake 1: Using `@Value` in a Static Context
+
+```java
+@Component
+public class PaymentConfig {
+
+    @Value("${payment.api.key}")
+    private static String apiKey;
+
+    public static String getApiKey() {
+        return apiKey;   // null
+    }
+}
+```
+
+**Why?**
+- Static fields belong to the class, not a Spring bean instance.
+- Spring cannot inject static fields.
+
+#### ❌ Mistake 2: Using `@Value` Inside the Constructor
+
+```java
+@Component
+public class NotificationService {
+
+    @Value("${notification.url}")
+    private String url;
+
+    public NotificationService() {
+        System.out.println(url);   // null
+    }
+}
+```
+
+**Why does this happen?**
+
+- Constructor executes first.
+- Then Spring injects `@Value` and `@Autowired`.
+- Finally `@PostConstruct` runs.
+
+```
+Constructor
+    ↓
+Object Created
+    ↓
+@Value / @Autowired Injection
+    ↓
+@PostConstruct
+    ↓
+Bean Ready
+```
+
+### ✅ Better Approach 1 — `@PostConstruct`
+
+```java
+@PostConstruct
+public void init() {
+    System.out.println(url);
+}
+```
+
+### ✅ Better Approach 2 — Constructor Injection (Recommended)
+
+```java
+@Component
+public class PaymentConfig {
+
+    private final String apiKey;
+
+    public PaymentConfig(@Value("${payment.api.key}") String apiKey) {
+        this.apiKey = apiKey;
+    }
+}
+```
+
+> **Memory Trick:** Constructor → Injection → `@PostConstruct` → Ready.
+
 ### Common Mistake ❌
 ```
 WARNING: expected single matching bean but found 2: dieselEngine, petrolEngine
@@ -302,6 +428,17 @@ HTTP Response 200 OK  {JSON body}
 
 </details>
 
+### 🎯 Interview Answers
+<details>
+<summary>Click to expand</summary>
+
+- `DispatcherServlet` is the traffic cop of Spring MVC — it receives every request, figures out where it needs to go, executes the handler and orchestrates the response, all while keeping controllers focused purely on business logic.
+- `@Controller` → Returns a view (HTML/JSP/Thymeleaf) for rendering web pages.
+  `@RestController` → Returns data (typically JSON/XML) directly in the HTTP response body for REST APIs.
+- Spring uses `ContentNegotiationManager` to determine the desired response format by checking the Accept header (e.g., application/json vs application/xml), a format query parameter, or a path extension. It then selects the appropriate HttpMessageConverter (like MappingJackson2HttpMessageConverter for JSON or Jaxb2RootElementHttpMessageConverter for XML) to serialize the @ResponseBody return value before writing it to the HTTP response.
+
+
+</details>
 ---
 
 ## 4. Spring Data JPA, Hibernate & ORM
@@ -483,8 +620,285 @@ public ParkingSlot reserveSlot() {
 
 </details>
 
+
+### 🎯 Interview Answers
+<details>
+<summary>Click to expand</summary>
+
+Here are concise answers to all your JPA/Hibernate questions, organized by level:
+
 ---
 
+## **Intermediate**
+
+### 1. JPA vs Hibernate
+
+| JPA | Hibernate |
+|-----|-----------|
+| **Specification** (Java Persistence API) — defines interfaces and rules | **Implementation** of JPA — the actual engine |
+| `javax.persistence.*` or `jakarta.persistence.*` packages | `org.hibernate.*` packages |
+| `EntityManager`, `Query`, `TypedQuery` | `Session`, `SessionFactory`, `CriteriaBuilder` |
+| Portable across providers (EclipseLink, OpenJPA, etc.) | Hibernate-specific features (HQL, `@Formula`, `@Filter`, `Session`) |
+
+> **Analogy:** JPA is the **electrical outlet standard**; Hibernate is **one brand of socket** that follows it (with extra features).
+
+```java
+// JPA (portable)
+@PersistenceContext
+private EntityManager em;
+
+// Hibernate-specific (non-portable)
+Session session = em.unwrap(Session.class);
+session.enableFilter("activeOnly");
+```
+
+---
+
+### 2. LAZY vs EAGER Loading
+
+| LAZY | EAGER |
+|------|-------|
+| Data loaded **on demand** when accessed | Data loaded **immediately** with parent |
+| `FetchType.LAZY` (default for `@OneToMany`, `@ManyToMany`) | `FetchType.EAGER` (default for `@OneToOne`, `@ManyToOne`) |
+| Better performance — loads only what's needed | Risk of loading massive object graphs unintentionally |
+
+```java
+@Entity
+public class Department {
+    @OneToMany(mappedBy = "department", fetch = FetchType.LAZY)
+    private List<Employee> employees;  // Loaded only when getEmployees() called
+}
+
+@Entity
+public class Employee {
+    @ManyToOne(fetch = FetchType.EAGER)  // Department loaded WITH employee
+    private Department department;
+}
+```
+
+> **Rule of thumb:** Prefer LAZY. EAGER is the root cause of most performance issues.
+
+---
+
+## **Advanced**
+
+### 3. N+1 Problem & Solutions
+
+**Problem:** 1 query fetches N parents, then N additional queries fetch children.
+
+```java
+// ❌ N+1: 1 query for departments + N queries for employees
+List<Department> depts = deptRepo.findAll();  // Query 1
+for (Department d : depts) {
+    d.getEmployees().size();  // Query 2, 3, 4... N+1
+}
+```
+
+**Solutions:**
+
+| Solution | How | When |
+|----------|-----|------|
+| `JOIN FETCH` | `SELECT d FROM Department d JOIN FETCH d.employees` | When you ALWAYS need children |
+| `@EntityGraph` | `@EntityGraph(attributePaths = "employees")` | Reusable, flexible |
+| `BatchSize` | `@BatchSize(size = 50)` | When you need children for SOME parents |
+
+```java
+// ✅ JOIN FETCH — single query
+@Query("SELECT d FROM Department d JOIN FETCH d.employees")
+List<Department> findAllWithEmployees();
+
+// ✅ EntityGraph
+@EntityGraph(attributePaths = {"employees", "employees.manager"})
+List<Department> findAll();
+```
+
+---
+
+### 4. LazyInitializationException & Prevention
+
+**Cause:** Accessing a LAZY association **outside a transaction/session**.
+
+```java
+// ❌ Session closed — proxy can't load data
+@Transactional
+public List<Employee> getEmployees() {
+    Department dept = deptRepo.findById(1L);  // dept attached to session
+    return dept.getEmployees();  // OK — still in transaction
+}
+
+// Later, in controller:
+dept.getEmployees().get(0).getName();  // 💥 LazyInitializationException!
+```
+
+**Prevention:**
+
+| Approach | Code |
+|----------|------|
+| **Open Session in View** | `spring.jpa.open-in-view=true` (anti-pattern, avoid in production) |
+| **Fetch within transaction** | Use `JOIN FETCH` or `@EntityGraph` in service layer |
+| **DTO projection** | `SELECT new EmployeeDto(e.id, e.name) FROM Employee e` |
+| **Map to DTO inside tx** | Convert to DTO before returning from `@Transactional` method |
+
+```java
+// ✅ Best practice: fetch everything needed inside transaction
+@Transactional(readOnly = true)
+public DepartmentDto getDepartmentWithEmployees(Long id) {
+    Department dept = deptRepo.findByIdWithEmployees(id);  // JOIN FETCH
+    return new DepartmentDto(dept);  // DTO has all data, no proxies
+}
+```
+
+---
+
+### 5. First-Level vs Second-Level Cache
+
+| First-Level Cache | Second-Level Cache |
+|-------------------|-------------------|
+| **Session/EntityManager** scope | **SessionFactory/JPA** scope — shared across sessions |
+| Enabled **by default** | Must enable explicitly (`@EnableCaching`, `hibernate.cache.use_second_level_cache=true`) |
+| Tracks entities within ONE transaction | Survives transaction boundaries |
+| Cleared when session closes | Requires cache provider (Ehcache, Caffeine, Redis) |
+
+```java
+// First-level: automatic
+EntityManager em = emf.createEntityManager();
+Employee e1 = em.find(Employee.class, 1L);  // DB hit
+Employee e2 = em.find(Employee.class, 1L);  // Cache hit — no DB query!
+
+// Second-level: needs config + @Cacheable
+@Entity
+@Cacheable
+@org.hibernate.annotations.Cache(usage = CacheConcurrencyStrategy.READ_WRITE)
+public class Employee { }
+```
+
+---
+
+### 6. How Spring Data JPA Generates Query Implementations
+
+At startup, Spring creates **proxy implementations** dynamically:
+
+```
+1. Scans interfaces extending JpaRepository
+2. Parses method names (Query Derivation)
+   findByLastNameAndActiveTrue → WHERE lastName = ? AND active = true
+3. Or uses @Query annotation directly
+4. Generates JDK Dynamic Proxy or CGLIB subclass at runtime
+5. Injects EntityManager into proxy
+```
+
+```java
+public interface UserRepository extends JpaRepository<User, Long> {
+    // Spring parses method name and generates:
+    // SELECT u FROM User u WHERE u.lastName = ?1 AND u.active = true
+    List<User> findByLastNameAndActiveTrue(String lastName);
+    
+    // Or uses explicit query
+    @Query("SELECT u FROM User u WHERE u.email = :email")
+    Optional<User> findByEmail(@Param("email") String email);
+}
+```
+
+> The actual implementation class is generated at runtime — you never write it.
+
+---
+
+### 7. PESSIMISTIC_WRITE vs PESSIMISTIC_READ
+
+| Mode | Lock Type | Use Case |
+|------|-----------|----------|
+| `PESSIMISTIC_READ` | Shared lock (others can read, not write) | Prevent dirty reads, allow concurrent reads |
+| `PESSIMISTIC_WRITE` | Exclusive lock (no one else can read or write) | Critical updates — inventory, balance deduction |
+
+```java
+@Lock(LockModeType.PESSIMISTIC_WRITE)
+@Query("SELECT a FROM Account a WHERE a.id = :id")
+Optional<Account> findByIdForUpdate(@Param("id") Long id);
+
+// Usage:
+@Transactional
+public void transfer(Long fromId, Long toId, BigDecimal amount) {
+    Account from = accountRepo.findByIdForUpdate(fromId).orElseThrow();  // Locked!
+    Account to = accountRepo.findByIdForUpdate(toId).orElseThrow();      // Locked!
+    from.debit(amount);
+    to.credit(amount);
+}  // Locks released on commit/rollback
+```
+
+> `PESSIMISTIC_WRITE` is what you use for **"SELECT FOR UPDATE"** in SQL.
+
+---
+
+### 8. `PageRequest.of(0, 1)` vs Full List
+
+```java
+// ❌ Loads ALL rows into memory just to get one
+User user = userRepo.findAll().get(0);  // SELECT * FROM users
+
+// ✅ Database returns only 1 row
+User user = userRepo.findAll(PageRequest.of(0, 1)).getContent().get(0);
+// SELECT * FROM users LIMIT 1
+```
+
+| `PageRequest.of(0, 1)` | Full List |
+|------------------------|-----------|
+| `LIMIT 1` in SQL | `SELECT *` — all rows |
+| O(1) memory | O(n) memory |
+| Network transfers 1 row | Network transfers all rows |
+| Index-friendly | Table scan |
+
+> Even better: `findFirstByOrderByCreatedAtDesc()` — Spring generates `LIMIT 1` automatically.
+
+---
+
+### 9. `@Lock` Works on H2 but Not PostgreSQL
+
+**Likely cause: H2 doesn't support or defaults to different locking behavior.**
+
+| Issue | Explanation |
+|-------|-------------|
+| **H2 lacks `SELECT FOR UPDATE` support** in some modes | H2's MVCC mode may silently ignore pessimistic locks |
+| **No `@Transactional`** | Lock requires active transaction — H2 might auto-commit, PostgreSQL won't |
+| **Wrong isolation level** | PostgreSQL defaults to `READ COMMITTED`; lock behavior varies |
+| **Lock timeout** | PostgreSQL waits indefinitely by default; H2 may return immediately |
+
+**Fix:**
+
+```java
+@Transactional  // ← REQUIRED for locks!
+@Lock(LockModeType.PESSIMISTIC_WRITE)
+@QueryHints({
+    @QueryHint(name = "javax.persistence.lock.timeout", value = "5000")  // 5s timeout
+})
+@Query("SELECT a FROM Account a WHERE a.id = :id")
+Optional<Account> findByIdWithLock(@Param("id") Long id);
+```
+
+**Also verify:**
+- PostgreSQL connection isn't in `autocommit` mode
+- Use `SERIALIZABLE` or `READ COMMITTED` as appropriate
+- Check `pg_locks` view to confirm locks are acquired
+
+---
+
+## Quick Reference Card
+
+| Concept | Key Takeaway |
+|---------|-------------|
+| JPA vs Hibernate | Interface vs Implementation |
+| LAZY vs EAGER | Prefer LAZY; EAGER causes performance issues |
+| N+1 | Use `JOIN FETCH` or `@EntityGraph` |
+| LazyInitializationException | Fetch within transaction or use DTOs |
+| 1st vs 2nd level cache | Session vs SessionFactory scope |
+| Spring Data query generation | Method name parsing + runtime proxies |
+| PESSIMISTIC_WRITE | `SELECT FOR UPDATE` — exclusive lock |
+| PageRequest.of(0,1) | Always use pagination for single-row needs |
+| Lock on H2 vs PostgreSQL | H2 may silently ignore; always test on real DB |
+
+</details>
+---
+
+---
 ## 5. DTOs, Specification API & Pagination
 
 ### DTO — The Warehouse Analogy (from Class Notes)
