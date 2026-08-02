@@ -1,0 +1,9 @@
+1. The Check: DataSourceAutoConfiguration looks at the classpath and asks: "Is the javax. sql. DataSource class available in the running application?"
+
+2. The Result: Yes. Because the PostgreSQL driver is present, the JVM can find and load DataSource.class.
+
+3. The Action: @ConditionalonClass
+
+evaluates to True. Spring Boot activates the auto-configuration, looks for database credentials in your
+
+application.properties, and initializes a HikariCP connection pool to your database.
