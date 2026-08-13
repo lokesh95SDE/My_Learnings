@@ -155,6 +155,25 @@ public class LmsApplication {
 **Advanced**
 - Your app starts and an unwanted `DataSource` bean is created. How do you diagnose and fix it?
 - Explain the order of bean creation when auto-config competes with user-defined beans.
+          <details>
+          <summary>Click for Answer</summary>
+              
+            🟢 [1] DatabaseConnectionPool created — no dependencies
+            🟢 [2] CourseService created — depends on DatabaseConnectionPool
+            🟢 [3] EnrollmentController created — depends on CourseService
+              
+            EnrollmentController (User Bean A)
+            ↓ depends on
+            CourseService (Auto-config Bean B)
+            ↓ depends on
+            DatabaseConnectionPool (User Bean C)
+          
+            Registration (scanning) order:    A  →  C  →  B
+            ↓     ↓     ↓
+            Creation (instantiation) order:   3rd   1st   2nd
+            ↑     ↑     ↑
+            needs B  root  needs C
+          </details>
 - How does Spring Boot 3.x change auto-configuration vs 2.x?
 
 </details>
