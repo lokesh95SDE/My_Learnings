@@ -136,28 +136,220 @@
 
 
 
-${complete_message_content}=    Extract Complete Message Content
-...    ${pdf_id}
+@keyword("Extract Value By Regex")
+def extract_value_by_regex(
+    self,
+    file_path: str,
+    pattern: str,
+    occurrence: int = 1,
+    case_sensitive: bool = False,
+    page_number: Optional[int] = None
+) -> str:
+    """
+    Extracts a value using a custom regex pattern.
 
-Log    ${complete_message_content}
+    If page_number is provided, regex extraction is performed
+    only on that specific page.
+
+    If page_number is None, the entire PDF text is searched.
+
+    Arguments:
+    - file_path: PDF file path/handle
+    - pattern: Regex pattern with at least one capture group
+    - occurrence: Match occurrence to return (1-based)
+    - case_sensitive: Whether matching is case sensitive
+    - page_number: Optional 1-based page number
+
+    Returns:
+    - Extracted value from the first capture group
+    - Empty string if no match is found
+    """
+
+    # ------------------------------------------------------------
+    # Get text from requested page OR entire PDF
+    # ------------------------------------------------------------
+
+    if page_number is not None:
+        text = self.get_page_text(file_path, page_number)
+    else:
+        if file_path not in self._extracted_text_cache:
+            raise AssertionError(
+                f"PDF file '{file_path}' not opened. "
+                f"Use 'Open PDF File' first."
+            )
+
+        text = self._extracted_text_cache[file_path]
+
+    # ------------------------------------------------------------
+    # Apply regex
+    # ------------------------------------------------------------
+
+    flags = 0 if case_sensitive else re.IGNORECASE
+
+    matches = re.findall(
+        pattern,
+        text,
+        flags
+    )
+
+    # ------------------------------------------------------------
+    # Return requested occurrence
+    # ------------------------------------------------------------
+
+    if matches and len(matches) >= occurrence:
+
+        match = matches[occurrence - 1]
+
+        if isinstance(match, tuple):
+            return match[0].strip()
+
+        return match.strip()
+
+    return ""
 
 
 
+*** Test Cases ***
 
+Test_Validate_Common_Footer
+    [Documentation]    Validate common footer information on all pages except page 1
+    [Tags]             pdf    footer    validation
 
-Test_Extract_Message_Content_Fields
-    [Documentation]    Extract complete Message Content from PDF
+    ${pdf_id}=          Open PDF File    ${PDF_FILE_PATH}
+    ${page_count}=      Get PDF Page Count    ${pdf_id}
 
-    [Tags]    pdf    extraction    message_content
+    Log    Total PDF pages: ${page_count}
 
-    ${pdf_id}=    Open PDF File    ${PDF_FILE_PATH}
+    Should Be True    ${page_count} >= 2
 
-    ${complete_message_content}=    Extract Complete Message Content
+    # Page 2 will be used as the baseline.
+    ${expected_report_title}=
+    ...    Extract Value By Regex
     ...    ${pdf_id}
+    ...    ${message_information_report_title}
+    ...    1
+    ...    False
+    ...    2
 
-    ${complete_message_content}=    Clean Extracted Text
-    ...    ${complete_message_content}
+    ${expected_classification}=
+    ...    Extract Value By Regex
+    ...    ${pdf_id}
+    ...    ${message_information_classification}
+    ...    1
+    ...    False
+    ...    2
 
-    Log    ${complete_message_content}
+    ${expected_report_created_full}=
+    ...    Extract Value By Regex
+    ...    ${pdf_id}
+    ...    ${message_information_report_created_full}
+    ...    1
+    ...    False
+    ...    2
+
+    Should Not Be Empty    ${expected_report_title}
+    Should Not Be Empty    ${expected_classification}
+    Should Not Be Empty    ${expected_report_created_full}
+
+    Log    Expected Report Title: ${expected_report_title}
+    Log    Expected Classification: ${expected_classification}
+    Log    Expected Report Created: ${expected_report_created_full}
+
+    # Extract timestamp and page number from Page 2
+    ${expected_parts}=    Split String    ${expected_report_created_full}
+
+    ${expected_timestamp}=
+    ...    Set Variable
+    ...    ${expected_parts}[0] ${expected_parts}[1]
+
+    ${expected_page_number}=
+    ...    Get From List
+    ...    ${expected_parts}
+    ...    2
+
+    Should Be Equal    ${expected_page_number}    2
+
+    # ------------------------------------------------------------
+    # Validate Page 2 through last page
+    # ------------------------------------------------------------
+
+    ${last_page}=    Evaluate    ${page_count} + 1
+
+    FOR    ${page_number}    IN RANGE    2    ${last_page}
+
+        Log    ===== Validating Footer - Page ${page_number} =====
+
+        ${actual_report_title}=
+        ...    Extract Value By Regex
+        ...    ${pdf_id}
+        ...    ${message_information_report_title}
+        ...    1
+        ...    False
+        ...    ${page_number}
+
+        ${actual_classification}=
+        ...    Extract Value By Regex
+        ...    ${pdf_id}
+        ...    ${message_information_classification}
+        ...    1
+        ...    False
+        ...    ${page_number}
+
+        ${actual_report_created_full}=
+        ...    Extract Value By Regex
+        ...    ${pdf_id}
+        ...    ${message_information_report_created_full}
+        ...    1
+        ...    False
+        ...    ${page_number}
+
+        Should Not Be Empty    ${actual_report_title}
+        Should Not Be Empty    ${actual_classification}
+        Should Not Be Empty    ${actual_report_created_full}
+
+        # --------------------------------------------------------
+        # Common footer fields
+        # --------------------------------------------------------
+
+        Should Be Equal
+        ...    ${actual_report_title}
+        ...    ${expected_report_title}
+        ...    Report Title mismatch on page ${page_number}
+
+        Should Be Equal
+        ...    ${actual_classification}
+        ...    ${expected_classification}
+        ...    Classification mismatch on page ${page_number}
+
+        # --------------------------------------------------------
+        # Separate timestamp and page number
+        # --------------------------------------------------------
+
+        ${actual_parts}=    Split String    ${actual_report_created_full}
+
+        ${actual_timestamp}=
+        ...    Set Variable
+        ...    ${actual_parts}[0] ${actual_parts}[1]
+
+        ${actual_page_number}=
+        ...    Get From List
+        ...    ${actual_parts}
+        ...    2
+
+        # Timestamp must be identical on all pages
+        Should Be Equal
+        ...    ${actual_timestamp}
+        ...    ${expected_timestamp}
+        ...    Report Created Timestamp mismatch on page ${page_number}
+
+        # Page number must match actual PDF page
+        Should Be Equal
+        ...    ${actual_page_number}
+        ...    ${page_number}
+        ...    Incorrect page number on page ${page_number}
+
+        Log    Footer validated successfully on page ${page_number}
+
+    END
 
     Close PDF File    ${pdf_id}
