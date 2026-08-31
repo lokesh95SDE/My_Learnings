@@ -209,24 +209,42 @@ def extract_value_by_regex(
 
 
 
-*** Test Cases ***
+
+
 
 Test_Validate_Common_Footer
     [Documentation]    Validate common footer information on all pages except page 1
-    [Tags]             pdf    footer    validation
+    [Tags]    pdf    extraction    footer    validation
 
-    ${pdf_id}=          Open PDF File    ${PDF_FILE_PATH}
-    ${page_count}=      Get PDF Page Count    ${pdf_id}
-
-    Log    Total PDF pages: ${page_count}
+    ${pdf_id}=    Open PDF File    ${PDF_FILE_PATH}
+    ${page_count}=    Get PDF Page Count    ${pdf_id}
 
     Should Be True    ${page_count} >= 2
 
-    # Page 2 will be used as the baseline.
+    # ============================================================
+    # FOOTER REGEX PATTERNS
+    # ============================================================
+
+    ${footer_report_title_pattern}=
+    ...    Set Variable
+    ...    Live Alert Filtering Report for Message ID\s*:\s*([^\n]+)
+
+    ${footer_classification_pattern}=
+    ...    Set Variable
+    ...    Classification\s*:\s*([^\n]+)
+
+    ${footer_report_created_pattern}=
+    ...    Set Variable
+    ...    Report created on\s*([^\n]+)
+
+    # ============================================================
+    # PAGE 2 = BASELINE / EXPECTED FOOTER
+    # ============================================================
+
     ${expected_report_title}=
     ...    Extract Value By Regex
     ...    ${pdf_id}
-    ...    ${message_information_report_title}
+    ...    ${footer_report_title_pattern}
     ...    1
     ...    False
     ...    2
@@ -234,7 +252,7 @@ Test_Validate_Common_Footer
     ${expected_classification}=
     ...    Extract Value By Regex
     ...    ${pdf_id}
-    ...    ${message_information_classification}
+    ...    ${footer_classification_pattern}
     ...    1
     ...    False
     ...    2
@@ -242,7 +260,7 @@ Test_Validate_Common_Footer
     ${expected_report_created_full}=
     ...    Extract Value By Regex
     ...    ${pdf_id}
-    ...    ${message_information_report_created_full}
+    ...    ${footer_report_created_pattern}
     ...    1
     ...    False
     ...    2
@@ -251,12 +269,19 @@ Test_Validate_Common_Footer
     Should Not Be Empty    ${expected_classification}
     Should Not Be Empty    ${expected_report_created_full}
 
-    Log    Expected Report Title: ${expected_report_title}
-    Log    Expected Classification: ${expected_classification}
-    Log    Expected Report Created: ${expected_report_created_full}
+    Log    Page 2 Report Title: ${expected_report_title}
+    Log    Page 2 Classification: ${expected_classification}
+    Log    Page 2 Report Created: ${expected_report_created_full}
 
-    # Extract timestamp and page number from Page 2
-    ${expected_parts}=    Split String    ${expected_report_created_full}
+    # ============================================================
+    # SPLIT PAGE 2 FOOTER
+    # Example:
+    # 2026-08-24 12:40:10 2
+    # ============================================================
+
+    ${expected_parts}=
+    ...    Split String
+    ...    ${expected_report_created_full}
 
     ${expected_timestamp}=
     ...    Set Variable
@@ -269,20 +294,25 @@ Test_Validate_Common_Footer
 
     Should Be Equal    ${expected_page_number}    2
 
-    # ------------------------------------------------------------
-    # Validate Page 2 through last page
-    # ------------------------------------------------------------
+    # ============================================================
+    # VALIDATE PAGE 2 -> LAST PAGE
+    # PAGE 1 IS INTENTIONALLY NOT VALIDATED
+    # ============================================================
 
     ${last_page}=    Evaluate    ${page_count} + 1
 
     FOR    ${page_number}    IN RANGE    2    ${last_page}
 
-        Log    ===== Validating Footer - Page ${page_number} =====
+        Log    ===== Validating Footer on Page ${page_number} =====
+
+        # --------------------------------------------------------
+        # Extract footer from current page
+        # --------------------------------------------------------
 
         ${actual_report_title}=
         ...    Extract Value By Regex
         ...    ${pdf_id}
-        ...    ${message_information_report_title}
+        ...    ${footer_report_title_pattern}
         ...    1
         ...    False
         ...    ${page_number}
@@ -290,7 +320,7 @@ Test_Validate_Common_Footer
         ${actual_classification}=
         ...    Extract Value By Regex
         ...    ${pdf_id}
-        ...    ${message_information_classification}
+        ...    ${footer_classification_pattern}
         ...    1
         ...    False
         ...    ${page_number}
@@ -298,17 +328,26 @@ Test_Validate_Common_Footer
         ${actual_report_created_full}=
         ...    Extract Value By Regex
         ...    ${pdf_id}
-        ...    ${message_information_report_created_full}
+        ...    ${footer_report_created_pattern}
         ...    1
         ...    False
         ...    ${page_number}
 
-        Should Not Be Empty    ${actual_report_title}
-        Should Not Be Empty    ${actual_classification}
-        Should Not Be Empty    ${actual_report_created_full}
+        # --------------------------------------------------------
+        # Make sure footer exists
+        # --------------------------------------------------------
+
+        Should Not Be Empty
+        ...    ${actual_report_title}
+
+        Should Not Be Empty
+        ...    ${actual_classification}
+
+        Should Not Be Empty
+        ...    ${actual_report_created_full}
 
         # --------------------------------------------------------
-        # Common footer fields
+        # Validate common footer fields
         # --------------------------------------------------------
 
         Should Be Equal
@@ -322,10 +361,12 @@ Test_Validate_Common_Footer
         ...    Classification mismatch on page ${page_number}
 
         # --------------------------------------------------------
-        # Separate timestamp and page number
+        # Split timestamp and page number
         # --------------------------------------------------------
 
-        ${actual_parts}=    Split String    ${actual_report_created_full}
+        ${actual_parts}=
+        ...    Split String
+        ...    ${actual_report_created_full}
 
         ${actual_timestamp}=
         ...    Set Variable
@@ -336,19 +377,25 @@ Test_Validate_Common_Footer
         ...    ${actual_parts}
         ...    2
 
-        # Timestamp must be identical on all pages
+        # --------------------------------------------------------
+        # Timestamp must be same on every page
+        # --------------------------------------------------------
+
         Should Be Equal
         ...    ${actual_timestamp}
         ...    ${expected_timestamp}
         ...    Report Created Timestamp mismatch on page ${page_number}
 
-        # Page number must match actual PDF page
+        # --------------------------------------------------------
+        # Page number must match PDF page number
+        # --------------------------------------------------------
+
         Should Be Equal
         ...    ${actual_page_number}
         ...    ${page_number}
-        ...    Incorrect page number on page ${page_number}
+        ...    Incorrect footer page number on page ${page_number}
 
-        Log    Footer validated successfully on page ${page_number}
+        Log    Footer validation successful for page ${page_number}
 
     END
 
