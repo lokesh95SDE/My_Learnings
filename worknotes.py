@@ -1,20 +1,16 @@
 def extract_table_from_page(self, pdf_id, page_number, expected_headers):
     """
-    Extract a structured table from a PDF page using pdfplumber.
+    Extract a structured table from a specific PDF page.
 
-    Args:
-        pdf_id: Open PDF identifier/handle used by the existing framework.
-        page_number: 1-based PDF page number.
-        expected_headers: List of expected column headers.
-
-    Returns:
-        List[dict]: Table rows represented as dictionaries.
+    pdf_id is the file path returned by Open PDF File.
     """
 
-    pdf = self._get_pdf_document(pdf_id)
+    if pdf_id not in self._pdf_cache:
+        raise AssertionError(
+            f"PDF is not open or not found in cache: {pdf_id}"
+        )
 
-    if pdf is None:
-        raise AssertionError(f"PDF not found for pdf_id: {pdf_id}")
+    pdf = self._pdf_cache[pdf_id]
 
     if page_number < 1 or page_number > len(pdf.pages):
         raise AssertionError(
@@ -24,8 +20,6 @@ def extract_table_from_page(self, pdf_id, page_number, expected_headers):
 
     page = pdf.pages[page_number - 1]
 
-    # The PDF tables shown in your screenshots have visible
-    # horizontal and vertical borders.
     table_settings = {
         "vertical_strategy": "lines",
         "horizontal_strategy": "lines",
@@ -41,7 +35,7 @@ def extract_table_from_page(self, pdf_id, page_number, expected_headers):
 
     if not tables:
         raise AssertionError(
-            f"No table found on PDF page {page_number}"
+            f"No table found on page {page_number}"
         )
 
     expected_headers_normalized = [
@@ -54,10 +48,11 @@ def extract_table_from_page(self, pdf_id, page_number, expected_headers):
         if not table:
             continue
 
-        # Find the header row.
         header_index = None
 
+        # Find the expected header row
         for index, row in enumerate(table):
+
             if not row:
                 continue
 
@@ -83,6 +78,7 @@ def extract_table_from_page(self, pdf_id, page_number, expected_headers):
 
         result = []
 
+        # Extract rows after the header
         for row in table[header_index + 1:]:
 
             if not row:
@@ -93,11 +89,11 @@ def extract_table_from_page(self, pdf_id, page_number, expected_headers):
                 for cell in row
             ]
 
-            # Ignore completely empty rows.
+            # Ignore empty rows
             if not any(cleaned_row):
                 continue
 
-            # Ignore repeated headers appearing on continuation pages.
+            # Ignore repeated header rows
             normalized_row = [
                 self._normalize_table_text(cell)
                 for cell in cleaned_row
@@ -109,31 +105,41 @@ def extract_table_from_page(self, pdf_id, page_number, expected_headers):
             ):
                 continue
 
-            # Make sure row has the same number of cells as headers.
+            # Make number of cells match number of headers
             if len(cleaned_row) < len(headers):
                 cleaned_row.extend(
                     [""] * (len(headers) - len(cleaned_row))
                 )
 
-            if len(cleaned_row) > len(headers):
+            elif len(cleaned_row) > len(headers):
                 cleaned_row = cleaned_row[:len(headers)]
 
-            row_dict = dict(zip(headers, cleaned_row))
+            row_dictionary = dict(
+                zip(headers, cleaned_row)
+            )
 
-            result.append(row_dict)
+            result.append(row_dictionary)
 
         return result
 
     raise AssertionError(
         f"Expected table headers not found on page {page_number}. "
-        f"Expected: {expected_headers}"
+        f"Expected headers: {expected_headers}"
     )
+
 
 
 
 def _clean_table_cell(self, value):
     """
-    Clean a PDF table cell while preserving meaningful spaces.
+    Clean PDF table cell text.
+
+    PDF line wrapping such as:
+        Filtering
+        Engine
+
+    becomes:
+        Filtering Engine
     """
 
     if value is None:
@@ -141,7 +147,7 @@ def _clean_table_cell(self, value):
 
     value = str(value)
 
-    # Replace line breaks caused by wrapped PDF text.
+    # Convert line breaks / multiple spaces to one space
     value = re.sub(r"\s+", " ", value)
 
     return value.strip()
@@ -149,7 +155,7 @@ def _clean_table_cell(self, value):
 
 def _normalize_table_text(self, value):
     """
-    Normalize text for comparison.
+    Normalize text when comparing headers.
     """
 
     if value is None:
@@ -164,7 +170,7 @@ def _normalize_table_text(self, value):
 
 def _headers_match(self, actual_headers, expected_headers):
     """
-    Determine whether a PDF row represents the expected table header.
+    Check whether a row contains the expected table headers.
     """
 
     if len(actual_headers) < len(expected_headers):
@@ -175,10 +181,9 @@ def _headers_match(self, actual_headers, expected_headers):
     return actual == expected_headers
 
 
-
 def extract_action_audit_trail(self, pdf_id, page_number):
     """
-    Extract Action Audit Trail table from the specified PDF page.
+    Extract Action Audit Trail table.
     """
 
     headers = [
@@ -195,11 +200,10 @@ def extract_action_audit_trail(self, pdf_id, page_number):
         page_number,
         headers
     )
-
 
 def extract_audit_trail(self, pdf_id, page_number):
     """
-    Extract Audit Trail table from the specified PDF page.
+    Extract Audit Trail table.
     """
 
     headers = [
@@ -216,3 +220,33 @@ def extract_audit_trail(self, pdf_id, page_number):
         page_number,
         headers
     )
+
+
+
+PDF2Library.py
+│
+├── Open PDF File
+│       │
+│       ├── pdfplumber.open(file_path)
+│       ├── self._pdf_cache[file_path] = pdf
+│       └── return file_path
+│
+├── Get Page Text
+│
+├── Extract Value By Regex
+│
+├── Extract Value By Key
+│
+├── Extract Table From Page       ← NEW
+│       │
+│       ├── get PDF from _pdf_cache
+│       ├── pdfplumber.extract_tables()
+│       ├── find static headers
+│       ├── extract dynamic rows
+│       └── return List[Dictionary]
+│
+├── Extract Action Audit Trail    ← NEW
+│       └── Extract Table From Page
+│
+└── Extract Audit Trail            ← NEW
+        └── Extract Table From Page
