@@ -1,402 +1,218 @@
-    @keyword("Extract Complete Message Content")
-    def extract_complete_message_content(
-        self,
-        file_path: str,
-        start_page: Optional[int] = None,
-        x_tolerance: float = 3,
-        y_tolerance: float = 3,
-        keep_blank_chars: bool = True
-    ) -> str:
-        """
-        Extracts complete Message Content from consecutive PDF pages.
-
-        If start_page is provided, extraction starts from that page.
-        If start_page is None, the first Message Content page is found
-        automatically.
-
-        The Message Content is continued across consecutive pages and
-        returned as one combined string.
-        """
-
-        if file_path not in self._pdf_cache:
-            raise AssertionError(
-                f"PDF file '{file_path}' not opened. "
-                f"Use 'Open PDF File' first."
-            )
-
-        pdf = self._pdf_cache[file_path]
-
-        total_pages = len(pdf.pages)
-
-        # ---------------------------------------------------------
-        # Find starting page automatically if not supplied
-        # ---------------------------------------------------------
-        if start_page is None:
-
-            for index, page in enumerate(pdf.pages, start=1):
-
-                page_text = page.extract_text(
-                    x_tolerance=x_tolerance,
-                    y_tolerance=y_tolerance,
-                    keep_blank_chars=keep_blank_chars
-                ) or ""
-
-                if re.search(
-                    r"Message\s+Content",
-                    page_text,
-                    re.IGNORECASE
-                ):
-                    start_page = index
-                    break
-
-        if start_page is None:
-            return ""
-
-        if start_page < 1 or start_page > total_pages:
-            raise AssertionError(
-                f"Page number '{start_page}' out of range. "
-                f"PDF has {total_pages} pages."
-            )
-
-        # ---------------------------------------------------------
-        # Extract Message Content page by page
-        # ---------------------------------------------------------
-        complete_content = []
-
-        for page_number in range(start_page, total_pages + 1):
-
-            page = pdf.pages[page_number - 1]
-
-            page_text = page.extract_text(
-                x_tolerance=x_tolerance,
-                y_tolerance=y_tolerance,
-                keep_blank_chars=keep_blank_chars
-            ) or ""
-
-            if not page_text:
-                continue
-
-            # Check whether this page contains Message Content
-            message_match = re.search(
-                r"Message\s+Content",
-                page_text,
-                re.IGNORECASE
-            )
-
-            # First page must contain Message Content.
-            # Following pages may be continuation pages.
-            if page_number == start_page:
-
-                if not message_match:
-                    break
-
-                content = page_text[message_match.end():]
-
-            else:
-
-                # Stop when the next section starts.
-                #
-                # Your PDF examples show sections such as:
-                # Action Audit Trail
-                # Hits Overview
-                # Hits Details
-                #
-                if re.search(
-                    r"Action\s+Audit\s+Trail|"
-                    r"Hits\s+Overview|"
-                    r"Hits\s+Details",
-                    page_text,
-                    re.IGNORECASE
-                ):
-                    break
-
-                # If another Message Content header exists,
-                # remove that header.
-                if message_match:
-                    content = page_text[message_match.end():]
-                else:
-                    content = page_text
-
-            # Remove footer from the extracted page content
-            content = re.split(
-                r"Live\s+Alert\s+Filtering\s+Report",
-                content,
-                maxsplit=1,
-                flags=re.IGNORECASE
-            )[0]
-
-            content = content.strip()
-
-            if content:
-                complete_content.append(content)
-
-        return "\n".join(complete_content)
-
-
-
-
-
-@keyword("Extract Value By Regex")
-def extract_value_by_regex(
-    self,
-    file_path: str,
-    pattern: str,
-    occurrence: int = 1,
-    case_sensitive: bool = False,
-    page_number: Optional[int] = None
-) -> str:
+def extract_table_from_page(self, pdf_id, page_number, expected_headers):
     """
-    Extracts a value using a custom regex pattern.
+    Extract a structured table from a PDF page using pdfplumber.
 
-    If page_number is provided, regex extraction is performed
-    only on that specific page.
-
-    If page_number is None, the entire PDF text is searched.
-
-    Arguments:
-    - file_path: PDF file path/handle
-    - pattern: Regex pattern with at least one capture group
-    - occurrence: Match occurrence to return (1-based)
-    - case_sensitive: Whether matching is case sensitive
-    - page_number: Optional 1-based page number
+    Args:
+        pdf_id: Open PDF identifier/handle used by the existing framework.
+        page_number: 1-based PDF page number.
+        expected_headers: List of expected column headers.
 
     Returns:
-    - Extracted value from the first capture group
-    - Empty string if no match is found
+        List[dict]: Table rows represented as dictionaries.
     """
 
-    # ------------------------------------------------------------
-    # Get text from requested page OR entire PDF
-    # ------------------------------------------------------------
+    pdf = self._get_pdf_document(pdf_id)
 
-    if page_number is not None:
-        text = self.get_page_text(file_path, page_number)
-    else:
-        if file_path not in self._extracted_text_cache:
-            raise AssertionError(
-                f"PDF file '{file_path}' not opened. "
-                f"Use 'Open PDF File' first."
-            )
+    if pdf is None:
+        raise AssertionError(f"PDF not found for pdf_id: {pdf_id}")
 
-        text = self._extracted_text_cache[file_path]
+    if page_number < 1 or page_number > len(pdf.pages):
+        raise AssertionError(
+            f"Invalid page number {page_number}. "
+            f"PDF contains {len(pdf.pages)} pages."
+        )
 
-    # ------------------------------------------------------------
-    # Apply regex
-    # ------------------------------------------------------------
+    page = pdf.pages[page_number - 1]
 
-    flags = 0 if case_sensitive else re.IGNORECASE
+    # The PDF tables shown in your screenshots have visible
+    # horizontal and vertical borders.
+    table_settings = {
+        "vertical_strategy": "lines",
+        "horizontal_strategy": "lines",
+        "intersection_tolerance": 5,
+        "snap_tolerance": 3,
+        "join_tolerance": 3,
+        "edge_min_length": 3,
+        "min_words_vertical": 1,
+        "min_words_horizontal": 1,
+    }
 
-    matches = re.findall(
-        pattern,
-        text,
-        flags
+    tables = page.extract_tables(table_settings)
+
+    if not tables:
+        raise AssertionError(
+            f"No table found on PDF page {page_number}"
+        )
+
+    expected_headers_normalized = [
+        self._normalize_table_text(header)
+        for header in expected_headers
+    ]
+
+    for table in tables:
+
+        if not table:
+            continue
+
+        # Find the header row.
+        header_index = None
+
+        for index, row in enumerate(table):
+            if not row:
+                continue
+
+            normalized_row = [
+                self._normalize_table_text(cell)
+                for cell in row
+            ]
+
+            if self._headers_match(
+                normalized_row,
+                expected_headers_normalized
+            ):
+                header_index = index
+                break
+
+        if header_index is None:
+            continue
+
+        headers = [
+            self._clean_table_cell(cell)
+            for cell in table[header_index]
+        ]
+
+        result = []
+
+        for row in table[header_index + 1:]:
+
+            if not row:
+                continue
+
+            cleaned_row = [
+                self._clean_table_cell(cell)
+                for cell in row
+            ]
+
+            # Ignore completely empty rows.
+            if not any(cleaned_row):
+                continue
+
+            # Ignore repeated headers appearing on continuation pages.
+            normalized_row = [
+                self._normalize_table_text(cell)
+                for cell in cleaned_row
+            ]
+
+            if self._headers_match(
+                normalized_row,
+                expected_headers_normalized
+            ):
+                continue
+
+            # Make sure row has the same number of cells as headers.
+            if len(cleaned_row) < len(headers):
+                cleaned_row.extend(
+                    [""] * (len(headers) - len(cleaned_row))
+                )
+
+            if len(cleaned_row) > len(headers):
+                cleaned_row = cleaned_row[:len(headers)]
+
+            row_dict = dict(zip(headers, cleaned_row))
+
+            result.append(row_dict)
+
+        return result
+
+    raise AssertionError(
+        f"Expected table headers not found on page {page_number}. "
+        f"Expected: {expected_headers}"
     )
 
-    # ------------------------------------------------------------
-    # Return requested occurrence
-    # ------------------------------------------------------------
-
-    if matches and len(matches) >= occurrence:
-
-        match = matches[occurrence - 1]
-
-        if isinstance(match, tuple):
-            return match[0].strip()
-
-        return match.strip()
-
-    return ""
 
 
+def _clean_table_cell(self, value):
+    """
+    Clean a PDF table cell while preserving meaningful spaces.
+    """
+
+    if value is None:
+        return ""
+
+    value = str(value)
+
+    # Replace line breaks caused by wrapped PDF text.
+    value = re.sub(r"\s+", " ", value)
+
+    return value.strip()
+
+
+def _normalize_table_text(self, value):
+    """
+    Normalize text for comparison.
+    """
+
+    if value is None:
+        return ""
+
+    value = str(value)
+
+    value = re.sub(r"\s+", " ", value)
+
+    return value.strip().lower()
+
+
+def _headers_match(self, actual_headers, expected_headers):
+    """
+    Determine whether a PDF row represents the expected table header.
+    """
+
+    if len(actual_headers) < len(expected_headers):
+        return False
+
+    actual = actual_headers[:len(expected_headers)]
+
+    return actual == expected_headers
 
 
 
+def extract_action_audit_trail(self, pdf_id, page_number):
+    """
+    Extract Action Audit Trail table from the specified PDF page.
+    """
 
-Test_Validate_Common_Footer
-    [Documentation]    Validate common footer information on all pages except page 1
-    [Tags]    pdf    extraction    footer    validation
+    headers = [
+        "Date",
+        "Operator",
+        "Action Type",
+        "Status",
+        "Comment",
+        "Alert Flag"
+    ]
 
-    ${pdf_id}=    Open PDF File    ${PDF_FILE_PATH}
-    ${page_count}=    Get PDF Page Count    ${pdf_id}
+    return self.extract_table_from_page(
+        pdf_id,
+        page_number,
+        headers
+    )
 
-    Should Be True    ${page_count} >= 2
 
-    # ============================================================
-    # FOOTER REGEX PATTERNS
-    # ============================================================
+def extract_audit_trail(self, pdf_id, page_number):
+    """
+    Extract Audit Trail table from the specified PDF page.
+    """
 
-    ${footer_report_title_pattern}=
-    ...    Set Variable
-    ...    Live Alert Filtering Report for Message ID\s*:\s*([^\n]+)
+    headers = [
+        "Date",
+        "Operator",
+        "Action Type",
+        "Status",
+        "Comment",
+        "Alert Flag"
+    ]
 
-    ${footer_classification_pattern}=
-    ...    Set Variable
-    ...    Classification\s*:\s*([^\n]+)
-
-    ${footer_report_created_pattern}=
-    ...    Set Variable
-    ...    Report created on\s*([^\n]+)
-
-    # ============================================================
-    # PAGE 2 = BASELINE / EXPECTED FOOTER
-    # ============================================================
-
-    ${expected_report_title}=
-    ...    Extract Value By Regex
-    ...    ${pdf_id}
-    ...    ${footer_report_title_pattern}
-    ...    1
-    ...    False
-    ...    2
-
-    ${expected_classification}=
-    ...    Extract Value By Regex
-    ...    ${pdf_id}
-    ...    ${footer_classification_pattern}
-    ...    1
-    ...    False
-    ...    2
-
-    ${expected_report_created_full}=
-    ...    Extract Value By Regex
-    ...    ${pdf_id}
-    ...    ${footer_report_created_pattern}
-    ...    1
-    ...    False
-    ...    2
-
-    Should Not Be Empty    ${expected_report_title}
-    Should Not Be Empty    ${expected_classification}
-    Should Not Be Empty    ${expected_report_created_full}
-
-    Log    Page 2 Report Title: ${expected_report_title}
-    Log    Page 2 Classification: ${expected_classification}
-    Log    Page 2 Report Created: ${expected_report_created_full}
-
-    # ============================================================
-    # SPLIT PAGE 2 FOOTER
-    # Example:
-    # 2026-08-24 12:40:10 2
-    # ============================================================
-
-    ${expected_parts}=
-    ...    Split String
-    ...    ${expected_report_created_full}
-
-    ${expected_timestamp}=
-    ...    Set Variable
-    ...    ${expected_parts}[0] ${expected_parts}[1]
-
-    ${expected_page_number}=
-    ...    Get From List
-    ...    ${expected_parts}
-    ...    2
-
-    Should Be Equal    ${expected_page_number}    2
-
-    # ============================================================
-    # VALIDATE PAGE 2 -> LAST PAGE
-    # PAGE 1 IS INTENTIONALLY NOT VALIDATED
-    # ============================================================
-
-    ${last_page}=    Evaluate    ${page_count} + 1
-
-    FOR    ${page_number}    IN RANGE    2    ${last_page}
-
-        Log    ===== Validating Footer on Page ${page_number} =====
-
-        # --------------------------------------------------------
-        # Extract footer from current page
-        # --------------------------------------------------------
-
-        ${actual_report_title}=
-        ...    Extract Value By Regex
-        ...    ${pdf_id}
-        ...    ${footer_report_title_pattern}
-        ...    1
-        ...    False
-        ...    ${page_number}
-
-        ${actual_classification}=
-        ...    Extract Value By Regex
-        ...    ${pdf_id}
-        ...    ${footer_classification_pattern}
-        ...    1
-        ...    False
-        ...    ${page_number}
-
-        ${actual_report_created_full}=
-        ...    Extract Value By Regex
-        ...    ${pdf_id}
-        ...    ${footer_report_created_pattern}
-        ...    1
-        ...    False
-        ...    ${page_number}
-
-        # --------------------------------------------------------
-        # Make sure footer exists
-        # --------------------------------------------------------
-
-        Should Not Be Empty
-        ...    ${actual_report_title}
-
-        Should Not Be Empty
-        ...    ${actual_classification}
-
-        Should Not Be Empty
-        ...    ${actual_report_created_full}
-
-        # --------------------------------------------------------
-        # Validate common footer fields
-        # --------------------------------------------------------
-
-        Should Be Equal
-        ...    ${actual_report_title}
-        ...    ${expected_report_title}
-        ...    Report Title mismatch on page ${page_number}
-
-        Should Be Equal
-        ...    ${actual_classification}
-        ...    ${expected_classification}
-        ...    Classification mismatch on page ${page_number}
-
-        # --------------------------------------------------------
-        # Split timestamp and page number
-        # --------------------------------------------------------
-
-        ${actual_parts}=
-        ...    Split String
-        ...    ${actual_report_created_full}
-
-        ${actual_timestamp}=
-        ...    Set Variable
-        ...    ${actual_parts}[0] ${actual_parts}[1]
-
-        ${actual_page_number}=
-        ...    Get From List
-        ...    ${actual_parts}
-        ...    2
-
-        # --------------------------------------------------------
-        # Timestamp must be same on every page
-        # --------------------------------------------------------
-
-        Should Be Equal
-        ...    ${actual_timestamp}
-        ...    ${expected_timestamp}
-        ...    Report Created Timestamp mismatch on page ${page_number}
-
-        # --------------------------------------------------------
-        # Page number must match PDF page number
-        # --------------------------------------------------------
-
-        Should Be Equal
-        ...    ${actual_page_number}
-        ...    ${page_number}
-        ...    Incorrect footer page number on page ${page_number}
-
-        Log    Footer validation successful for page ${page_number}
-
-    END
-
-    Close PDF File    ${pdf_id}
+    return self.extract_table_from_page(
+        pdf_id,
+        page_number,
+        headers
+    )
