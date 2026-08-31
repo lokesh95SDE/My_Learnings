@@ -1,4 +1,4 @@
-def extract_table_from_page(self, pdf_id, page_number, expected_headers):
+nodef extract_table_from_page(self, pdf_id, page_number, expected_headers):
     """
     Extract a structured table from a specific PDF page.
 
@@ -250,3 +250,20 @@ PDF2Library.py
 │
 └── Extract Audit Trail            ← NEW
         └── Extract Table From Page
+
+
+
+
+Test_Extract_Action_Audit_Trail_Table
+    [Documentation]    Extract Action Audit Trail table from PDF
+    [Tags]    pdf    extraction    action_audit_trail
+
+    ${pdf_id}=    Open PDF File    ${PDF_FILE_PATH}
+
+    ${action_audit_rows}=    Extract Action Audit Trail    ${pdf_id}    5
+
+    Log    ${action_audit_rows}
+
+    Should Not Be Empty    ${action_audit_rows}
+
+    Close PDF File    ${pdf_id}
