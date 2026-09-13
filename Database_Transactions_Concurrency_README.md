@@ -412,6 +412,22 @@ quantity
 
 The invoice uses `agreed_price`, not a mutable current `product.price`.
 
+## Preventing Inconsistency Caused by Non-Repeatable Reads
+
+### 1. Data Immutability (Schema Redesign)
+
+Instead of pointing directly to dynamic, mutable tables for transactional records, copy critical values into the transaction table at the moment of creation.
+
+#### Bad Design (Mutable Reference)
+```sql
+-- The order points directly to the product's dynamic price
+CREATE TABLE order_items (
+    order_id INT,
+    product_id INT REFERENCES products(id), -- If product price changes, old order totals break!
+    quantity INT
+);
+
+
 Senior lesson:
 
 > **Do not use an isolation level to compensate for a bad domain/data model.**
