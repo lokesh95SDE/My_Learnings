@@ -2,14 +2,14 @@
 
 # ☕ Spring Boot — Industry-Level Learning Material
 
-### From Student Notes to Senior Engineer & SDET Interview Mastery
+### From Student Notes to Senior Engineer & SDE Interview Mastery
 
 [![Java](https://img.shields.io/badge/Java-17%2B-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white)](https://openjdk.org/)
 [![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.x-6DB33F?style=for-the-badge&logo=springboot&logoColor=white)](https://spring.io/projects/spring-boot)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen?style=for-the-badge)](CONTRIBUTING.md)
 
-> **Audience:** Senior Java Backend Engineers · Senior SDETs · Spring Boot Architects  
+> **Audience:** Senior Java Backend Engineers · Senior SDEs · Spring Boot Architects  
 > **Goal:** Deep, interview-ready mastery — not just syntax, but *internals*, *production thinking*, and *design decisions*
 
 </div>
