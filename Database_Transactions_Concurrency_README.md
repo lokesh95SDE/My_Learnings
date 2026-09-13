@@ -412,13 +412,12 @@ quantity
 
 The invoice uses `agreed_price`, not a mutable current `product.price`.
 
-## Preventing Inconsistency Caused by Non-Repeatable Reads
+##Preventing Inconsistency Caused by Non-Repeatable Reads
 
-### 1. Data Immutability (Schema Redesign)
-
+1. Data Immutability (Schema Redesign)
 Instead of pointing directly to dynamic, mutable tables for transactional records, copy critical values into the transaction table at the moment of creation.
 
-#### Bad Design (Mutable Reference)
+Bad Design (Mutable Reference)
 ```sql
 -- The order points directly to the product's dynamic price
 CREATE TABLE order_items (
@@ -426,8 +425,44 @@ CREATE TABLE order_items (
     product_id INT REFERENCES products(id), -- If product price changes, old order totals break!
     quantity INT
 );
+```
+Good Design (Immutable Snapshot)
+```sql
+-- Capture the agreed price permanently on creation
+CREATE TABLE order_items (
+    order_id INT,
+    product_id INT REFERENCES products(id),
+    agreed_unit_price DECIMAL(10, 2) NOT NULL, -- Frozen snapshot of product.price at purchase time
+    quantity INT
+);
+```
+2. Row Locking (SELECT ... FOR UPDATE)
+Use explicit row locking when a multi-step operation requires reading a value, making a business decision, and writing back, ensuring no concurrent transaction modifies the row in between.
+```sql
+BEGIN;
 
+-- Lock the specific row so other concurrent transactions must wait
+SELECT balance FROM accounts WHERE account_id = 101 FOR UPDATE;
 
+-- Application checks if balance >= 500, then executes:
+UPDATE accounts SET balance = balance - 500 WHERE account_id = 101;
+
+COMMIT; -- Releases the lock
+```
+3. Snapshot Isolation / Isolation Levels
+Raise the transaction isolation level when running operations (such as end-of-day financial audits or reports) that require a consistent point-in-time view across multiple tables without blocking concurrent writers.
+```
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+-- First query reads data snapshot at transaction start
+SELECT SUM(balance) FROM accounts;
+
+-- Even if another transaction updates and commits a balance here, 
+-- this second query still sees the original snapshot:
+SELECT balance FROM accounts WHERE account_id = 101;
+
+COMMIT;
+```
 Senior lesson:
 
 > **Do not use an isolation level to compensate for a bad domain/data model.**
